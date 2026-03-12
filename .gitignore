@@ -1,0 +1,18 @@
+# macOS
+.DS_Store
+
+# R
+.Rhistory
+.Rdata
+.RData
+.Rproj.user/
+*.Rproj
+
+# R output
+*.Rout
+*_cache/
+/cache/
+
+# Temporary files
+*~
+\#*\#
