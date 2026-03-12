@@ -1,0 +1,392 @@
+---
+title: "CHESS LiDAR Tutorial"
+author: "HM Worsham"
+date: "`r Sys.Date()`"
+output:
+  prettydoc::html_pretty:
+    theme: architect
+    highlight: github
+---
+
+# Working with NEON AOP LiDAR Data from the CHESS Campaign
+
+This tutorial demonstrates how to work with NEON AOP LiDAR point cloud data from the 2025 CHESS campaign. It describes how to ingest and visualize the data, clip point clouds to specific areas of interest, and prepare the data for further analysis. It also walks through a few steps of a typical workflow for analyzing LiDAR data and poses challenges for which we'll try to come up with solutions later in the workshop. 
+
+## Acknowledgments
+
+This tutorial was developed using resources and data from various sources. If you use this tutorial or modify it for your own research or educational purposes, please acknowledge the original repository and contributors.
+
+To acknowledge this tutorial, please cite it as follows:
+
+```
+Worsham, H. M., Breckheimer, I., Henderson, A., and Falco, N. (2026). CHESS Analysis Workshop: CHESS LiDAR Tutorial v1. [Software]. https:://github.com/chess-rmbl/chess_workshop. 12 March 2026.
+
+```
+
+## 0. Workspace setup
+
+We'll start with some basic workspace setup. This include sourcing a config file, loading packages, and setting up authentication for Google Drive, where the LiDAR data are stored. 
+
+```{r knitr, echo=F, include=F}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+This notebook relies on a few external files and packages. We specify workspace configuration requirements in a `config.yml` file ('./analysis_scripts/lidar/config.yml), which we source at the beginning of the notebook. This allows us to keep sensitive information (like paths to authentication credentials) and package dependencies separate from the main code, making it easier to manage and share the notebook. This is a best practice for larger projects, because it allows you to specify common requirements across multiple scripts or notebooks in the project. We also source a few helper functions within the `R` directory, which we can use throughout the notebook.
+
+```{r config, include=FALSE}
+# Source config file
+config <- config::get(file=file.path('config', 'config.yml'))
+
+# Source helpers and other package functions
+lapply(list.files(file.path('.', 'R'), full.names=T), source)
+
+# Load packages
+load.pkgs(config$pkgs)
+```
+
+You can configure Drive authentication either using service account credentials or an email address. As long as the target files or folders are shared with your email account, email authentication should work. 
+```{r config, include=FALSE}
+# Config drive auth
+# drive_auth(email='hmworsham@lbl.gov')
+drive_auth(path=config$drivecreds$sa)
+```
+
+Finally, we'll configure a few other workspace settings, like the number of cores to use for parallel processing and a timeout option for downloading files from Google Drive, which keeps things well oiled. 
+```{r config, include=FALSE}
+# Number of cores
+ncores <- detectCores()-2L
+
+# Set timeout
+options(timeout=444)
+```
+
+## 1. Ingest data 
+
+The volume of data generated during the NEON AOP's LiDAR acquisition is prohibitive for most local operations. When we start running in production, we'll use high-performance computing infrastructure and parallel implementations. But for now, we can work with some small subsets of the data. The data are mostly stored on Google Drive, and we can use the `googledrive` package to access them. We have a few different types of data to work with, including a grid describing the layout of the LiDAR acquisition tiles and the LAS catalog of point cloud data.
+
+### UTM grid
+This shows the layout of the LiDAR acquisition tiles for the domain. Each tile covers an area of 1 km x 1km, aligned to the WGS84 UTM Zone 13 grid.
+```{r ingest.grid}
+neon.grid <- st_read(file.path(config$data, 'intermediate', 'neon_2025_lidar_utm_grid.geojson'))
+
+neon.grid <- neon.grid %>% 
+  dplyr::group_by(domain) %>% 
+  dplyr::mutate(count_lab = n())
+
+neon.cent <- neon.grid %>% 
+  dplyr::group_by(domain) %>% 
+  dplyr::summarise() %>% 
+  st_centroid() %>% 
+  left_join(data.frame(neon.grid[c('domain', 'count_lab')]), by='domain')
+
+ggplot() +
+  geom_sf(data=neon.grid, aes(fill=domain)) + 
+  geom_sf_label(data=neon.cent, aes(label=count_lab)) + 
+  scale_fill_bmj(name=NULL) +
+  theme_minimal()
+```
+This UTM grid is convenient because grid cell boundaries lie on round 1000 m intervals.
+```{r}
+print(st_geometry(neon.grid))
+```
+### LAS file
+
+Next, let's ingest some LiDAR data from one of those grid cells. The data are in LAS v1.4 format, a specification created by the American Society for Photogrammetry and Remote Sensing. Documentation for this data standard is in the `chess_workshop` repository: './documentation/LiDAR_documentation/las_specification_1.4.pdf' We'll spend some time exploring that data structure. 
+
+```{r}
+# Ingest example las
+x.las <- readLAS(file.path(config$extdata$pclocalpath, 'NEON_D13_CRBU_DP1_327000_4315000_classified_point_cloud_colorized.laz'))
+
+# 
+```
+Print the basic structure.
+```{r}
+print(x.las)
+```
+Let's dig a little deeper into the file structure. 
+```{r}
+View(x.las)
+```
+
+```{r}
+head(x.las@data)
+```
+
+### LAS catalog
+
+You may have noticed that this one LAS file is actually quite large (3.5 GB), and it's one of 1100+ in our full dataset from NEON. Rather than trying to deal with each file on its own, a better approach is to work with them in a specialized data standard called the 'LAS catalog'. This standard was developed by Jean-Romain Roussel and David Auty as part of the `lidR` package (Roussel and Auty 2026). It's a convenient format for working with large collections of LiDAR point cloud data. A LAS catalog is basically a data abstraction that describes a collection of .las or .laz LiDAR files, allowing for efficient processing of datasets that would exceed computer memory if you tried to open or load them all at once. It stores pointers to the locations of individual LAS files as well as metadata about each file. It enables parallel, chunk-based analysis, visualization, and validation without having to load entire point clouds in memory. 
+
+Before the workshop, we preselected tiles surrounding the CHESS 2025 sampling areas. We'll limit our scope for the workshop to these tiles, but a lot of this workflow can be applied to the full dataset when it's production time. 
+
+```{r las.clean}
+rm(x.las)
+gc()
+```
+
+```{r ingest.lascat}
+x.lascat <- readLAScatalog(file.path(config$extdata$pclocalpath))
+plot(st_geometry(neon.grid))
+plot(x.lascat, col='dodgerblue', add=T)
+```
+
+### Sampling area locations
+Up next are the CHESS 2025 sampling area locations. These are polygon objects saved in geoJSON format. We'll ingest them as Spatial Feature (`sf`) objects using the `sf` package. We'll also transform the coordinate reference system to match that of the LAS catalog, which is in UTM Zone 13N (EPSG:32613).
+```{r results='hide'}
+chess.areas <- ingest.drive('1297eYbGB2b30Vw-tHwKFBGznMeJ0tE96')
+chess.areas <- st_read(chess.areas$local_path)
+chess.areas <- st_transform(chess.areas, 'EPSG:32613')
+```
+Let's visualize them on top of the selected LiDAR tiles. 
+```{r}
+plot(x.lascat)
+plot(st_geometry(chess.areas), col='red', add=T)
+```
+
+### NEON-delivered CHM and DEM
+```{r}
+neon_chm <- ingest.drive.tif(config$extdata$chmid)
+neon_dtm <- ingest.drive.tif(config$extdata$dtmid)
+```
+
+```{r}
+ggplot() + 
+  geom_spatraster(data=neon_dtm) + 
+  geom_sf(data=chess.areas[chess.areas$SamplingAreaCode %in% c('TC', 'RU', 'RL', 'RB'),], color='red', fill=NA, linewidth=1) + 
+  scale_fill_terrain_c(na.value='transparent', name='elevation [m.a.s.l.]') + 
+  labs(title='NEON-delivered DTM') +
+  theme_classic()
+```
+```{r}
+ggplot() + 
+  geom_spatraster(data=neon_chm) + 
+  labs(title='NEON-delivered CHM') +
+  geom_sf(data=chess.areas[chess.areas$SamplingAreaCode %in% c('TC', 'RU', 'RL', 'RB'),], color='yellow', fill=NA, linewidth=1) + 
+  scale_fill_viridis_c(option='magma', na.value=NA, name='canopy height [m]') + 
+  theme_classic()
+```
+
+### Tree demographic and geospatial data
+
+Finally, we'll load some of the data that we collected *in situ* during the campaign, namely, the demographic and geospatial data for trees. 
+```{r}
+# Ingest data from Drive
+trees.demog <- read.csv(ingest.drive(config$extdata$treedemoid)$local_path) # yields a dataframe
+trees.geo <- st_read(ingest.drive(config$extdata$treegeoid)$local_path) # yields an sf object with geometry and attributes
+
+# Join geospatial and demographic data
+trees <- left_join(trees.geo %>% dplyr::select(-Sampling_Area), trees.demog, by='Site_Number')
+
+#names(trees)
+head(trees)
+```
+
+
+```{r}
+plot(trees[1:14,'Sampling_Area'])
+```
+
+## 2. Building out a processing workflow
+
+In this section, we'll work through a few examples of typical processing steps for cleaning up LiDAR data and starting an analysis. First, we'll clip the large LAS catalog to a region of interest, in this case, the sampling area at Taylor River Road Lower (RL). 
+
+```{r}
+# Print row 5 in chess.areas (SamplingAreaCode = 'RL')
+print(chess.areas[5,])
+```
+
+To make things manageable, we'll crop the LAS catalog to that sampling area and ingest any point within the sampling area's geometry.
+```{r}
+# Clip the las catalog
+las_clipped <- clip_roi(x.lascat, st_buffer(chess.areas[5,],50))
+```
+Check the innards.
+```{r}
+print(las_clipped)
+```
+
+```{r}
+print(head(las_clipped@data))
+```
+
+### Check for outliers and noise
+
+One critical step is to check the ingested point cloud for outlying or noisy points. Sometimes an emitted pulse can hit a bird or simply spaz out, and we don't want that stuff in our science. So in many cases, we'll want to filter those out before proceeding. 
+Below it appears that the maximum Z value in our point cloud is massively outside the IQR for the cloud as a whole. This smells of outlyingness so let's drop those. 
+
+```{r}
+# Print a summary
+print(summary(las_clipped@data$Z))
+cat('\nOriginal dimension:', dim(las_clipped))
+```
+
+```{r}
+# Drop outlying Z values
+las_clipped <- las_clipped[las_clipped$Z < quantile(las_clipped@data$Z, .999)]
+cat('New dimension: ', dim(las_clipped))
+```
+
+We can also drop points that NEON classified as noise.
+```{r}
+las_clipped <- las_clipped[!las_clipped$Classification == 7]
+```
+
+## Generate surface models
+
+One simple application of LiDAR data is to create spatially continuous models of terrestrial surfaces. Here, we'll use our clipped point cloud to generate a digital terrain model (DTM: the bare earth surface with all of the plants and other stuff removed) and a canopy height model (CHM: everything above the ground, normalized to the DTM)
+
+
+For the DTM, we'll use a really simple and straightforward algorithm, which fits a triangulated irregular network to the points classified as ground (`Classification`=2).
+```{r}
+dtm <- rasterize_terrain(las_clipped, res=1, algorithm=knnidw())
+
+ggplot() + 
+  geom_spatraster(data=dtm, aes(fill=Z)) + 
+  scale_fill_viridis_c(option='magma', na.value=NA, name='elevation [m]') + 
+  theme_void()
+```
+
+For the CHM, we'll first need to normalize the point cloud to the ground surface. We want our lowest values in the CHM to equal 0, and the values that describe the canopy to whatever the physical height of the canopy object is. 
+```{r}
+# benchmark 90s
+# las_norm_pc <- normalize_height(las_clipped, algorithm=knnidw(k=10L, p=2))
+
+# Normalize to ground
+las_norm_dtm <- normalize_height(las_clipped, algorithm=knnidw(k=18L, p=2), dtm=dtm)
+
+# Rasterize the remaining canopy points
+chm <- rasterize_canopy(las_norm_dtm, res=1, algorithm=p2r(0.2))
+```
+
+Visualize it. 
+```{r}
+ggplot() + 
+  geom_spatraster(data=chm, aes(fill=Z)) + 
+  scale_fill_viridis_c(option='magma', na.value=NA, name='height [m]') + 
+  theme_void()
+```
+
+A few things are wonky about this one. Any ideas?
+```{r}
+hist(chm$Z)
+```
+
+Answers:
+```{r}
+# Reasonable range of canopy heights. Some Z values < 0. 
+```
+
+## Identify trees
+
+Our next exercise will be to identify and segment individual trees. We'll first subset the point cloud a bit further to make this computationally feasible for tutorial purposes.
+
+```{r}
+# The code below generates a small square polygon which we use to clip the point cloud again
+sub_x <- c(357000, 357200)
+sub_y <- c(4314500, 4314700)
+sub_coords <- matrix(c(sub_x[1], sub_y[1], 
+                       sub_x[1], sub_y[2], 
+                       sub_x[2], sub_y[2], 
+                       sub_x[2], sub_y[1], 
+                       sub_x[1], sub_y[1]), 
+                     ncol=2, byrow=T)
+
+sub_sf <- st_sf(geometry=st_sfc(st_polygon(list(sub_coords))), crs='EPSG:32613')
+
+# We'll use the square to clip the point cloud and the CHM
+las_subset <- clip_roi(las_norm_dtm, sub_sf)
+chm_subset <- crop(chm, sub_sf)
+```
+
+The `lidR` function `locate_trees` uses a local maximum filter to isolate treetops
+```{r}
+las_trees <- locate_trees(las_subset, algorithm=lmf(ws=5, hmin=1))
+
+ggplot() + 
+  geom_spatraster(data=chm_subset, aes(fill=Z)) + 
+  scale_fill_distiller(palette='Spectral', na.value=NA) + 
+  geom_sf(data=las_trees, shape=3, size=0.8) + 
+  theme_classic()
+```
+
+What is this 'las_trees' object exactly?
+
+```{r}
+las_trees
+```
+How many trees did we find?
+```{r}
+print(length(unique(las_trees$treeID)))
+```
+
+Here's the distribution of tree-object heights. They seem fairly reasonable. 
+```{r}
+ggplot(las_trees) + 
+  geom_histogram(aes(x=Z), fill='dodgerblue', color='blue3') + 
+  theme_classic()
+```
+
+Now we can bring together the point cloud, the treetops we identified, and the canopy height model to segment the point cloud into individual tree crowns. The algorithm we'll use, from Dalponte and Coomes (2016) is somewhat complex. In simple terms, it selects a tree top from the `las_trees` sf object, and then 'grows' that tree by passing a window of a specified radius vertically down the point cloud at specific intervals. It adds pixels to the tree only if they lie within that window at that vertical interval. Typically the window's radius increases as it moves downward. 
+
+Let's do it. 
+```{r}
+las_segment <- lidR::segment_trees(las_subset, algorithm=dalponte2016(chm=chm, treetops=las_trees), attribute='treeID')
+plot(las_segment, bg = "white", size = 4, color = "treeID") # visualize trees
+
+# writeLAS(las_segment, '~/Downloads/RL_pointcloud_subset_segmented.laz')
+```
+
+Once points are assigned to tree objects, we can examine individual trees.
+```{r}
+tree110 <- filter_poi(las_segment, treeID == 24)
+plot(tree110, size = 8, bg = "white")
+```
+
+[Check it out in CloudCompare]
+
+### CHM vs trees
+
+Finally, we can compare our canopy height model to the in situ measurements. We'll start with the native NEON CHM. 
+
+```{r}
+chm.tree.heights <- terra::extract(neon_chm, vect(trees[trees$Sampling_Area=='UPTA: Taylor River Road Lower (RL)',]), fun='max', bind=T, 
+                                   weights=T)
+```
+
+```{r message=F}
+ggplot(chm.tree.heights, aes(x=Stem_Height, y=CHESS25_UPTA_CHM_1m_v1.tif)) + 
+  geom_abline(slope=1, intercept=0, linetype=3) + 
+  geom_smooth(method='lm', se=T, color='darkblue', fill='dodgerblue') + 
+  geom_point(color='dodgerblue', shape=21) + 
+  scale_y_continuous(limits=c(10,40)) + 
+  scale_x_continuous(limits=c(10,40)) + 
+  ggpmisc::stat_poly_eq() + 
+  labs(x='Field-measured stem height [m]', y='Maximum CHM height [m]') + 
+  coord_equal() + 
+  theme_classic()
+```
+
+Does our new CHM do any better?
+
+```{r}
+chm2.tree.heights <- terra::extract(chm, vect(trees), fun='max', bind=T, method='bilinear')
+```
+
+```{r}
+ggplot(chm2.tree.heights, aes(x=Stem_Height, y=Z)) + 
+  geom_abline(slope=1, intercept=0, linetype=3) + 
+  geom_smooth(method='lm', se=T, color='darkred', fill='red') + 
+  geom_point(color='red', shape=21) + 
+  scale_y_continuous(limits=c(10,40)) + 
+  scale_x_continuous(limits=c(10,40)) + 
+  ggpmisc::stat_poly_eq() + 
+  labs(x='Field-measured stem height [m]', y='Maximum CHM height [m]') + 
+  coord_equal() + 
+  theme_classic()
+```
+
+
+## Grand challenges
+1. How well do the CHM and *in situ* data align for forests? Think about crown polygon area alignment to crown objects, crown area, crown height, etc. 
+2. How well does the CHM in low-cover areas describe the vegetated surface? Compare CHM or segmented crowns to meadow/shrub field observations? 
+3. How can we improve point cloud classification? (ground, noise, low and high vegetation, etc.)
+4. What's the best segmentation or crown delineation strategy for our data? CHM based or point cloud based?
