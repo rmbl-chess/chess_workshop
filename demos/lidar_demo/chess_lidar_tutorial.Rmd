@@ -20,7 +20,6 @@ To acknowledge this tutorial, please cite it as follows:
 
 ```
 Worsham, H. M., Breckheimer, I., Henderson, A., and Falco, N. (2026). CHESS Analysis Workshop: CHESS LiDAR Tutorial v1. [Software]. https:://github.com/chess-rmbl/chess_workshop. 12 March 2026.
-
 ```
 
 ## 0. Workspace setup
@@ -47,8 +46,8 @@ load.pkgs(config$pkgs)
 You can configure Drive authentication either using service account credentials or an email address. As long as the target files or folders are shared with your email account, email authentication should work. 
 ```{r config, include=FALSE}
 # Config drive auth
-# drive_auth(email='hmworsham@lbl.gov')
-drive_auth(path=config$drivecreds$sa)
+drive_auth(email='hmworsham@lbl.gov')
+# drive_auth(path=config$drivecreds$sa)
 ```
 
 Finally, we'll configure a few other workspace settings, like the number of cores to use for parallel processing and a timeout option for downloading files from Google Drive, which keeps things well oiled. 
@@ -62,7 +61,7 @@ options(timeout=444)
 
 ## 1. Ingest data 
 
-The volume of data generated during the NEON AOP's LiDAR acquisition is prohibitive for most local operations. When we start running in production, we'll use high-performance computing infrastructure and parallel implementations. But for now, we can work with some small subsets of the data. The data are mostly stored on Google Drive, and we can use the `googledrive` package to access them. We have a few different types of data to work with, including a grid describing the layout of the LiDAR acquisition tiles and the LAS catalog of point cloud data.
+The volume of data generated during the NEON AOP's LiDAR acquisition is prohibitive for most local operations. When we start running in production, we'll use high-performance computing infrastructure and parallel implementations. But for now, we can work with some small subsets of the data. The data are stored on Google Drive, and we can use the `googledrive` package to access them. We have a few different types of data to work with, including a grid describing the layout of the LiDAR acquisition tiles and the LAS catalog of point cloud data.
 
 ### UTM grid
 This shows the layout of the LiDAR acquisition tiles for the domain. Each tile covers an area of 1 km x 1km, aligned to the WGS84 UTM Zone 13 grid.
@@ -83,7 +82,7 @@ ggplot() +
   geom_sf(data=neon.grid, aes(fill=domain)) + 
   geom_sf_label(data=neon.cent, aes(label=count_lab)) + 
   scale_fill_bmj(name=NULL) +
-  theme_minimal()
+  theme_minimal(base_size=16)
 ```
 This UTM grid is convenient because grid cell boundaries lie on round 1000 m intervals.
 ```{r}
@@ -95,8 +94,8 @@ Next, let's ingest some LiDAR data from one of those grid cells. The data are in
 
 ```{r}
 # Ingest example las
-x.las <- drive_download(config$extdata$xlasid, path=file.path(tempdir(), 'x.laz'), overwrite=T)
-readLAS(x.las$local_path)
+x.las <- readLAS(ingest.drive(config$extdata$xlasid))
+#x.las <- readLAS(x.las$local_path)
 # x.las <- readLAS(file.path(config$extdata$pclocalpath, 'NEON_D13_CRBU_DP1_327000_4315000_classified_point_cloud_colorized.laz'))
 ```
 Print the basic structure.
@@ -129,10 +128,13 @@ plot(st_geometry(neon.grid))
 plot(x.lascat, col='dodgerblue', add=T)
 ```
 
+```{r}
+x.lascat
+```
 ### Sampling area locations
 Up next are the CHESS 2025 sampling area locations. These are polygon objects saved in geoJSON format. We'll ingest them as Spatial Feature (`sf`) objects using the `sf` package. We'll also transform the coordinate reference system to match that of the LAS catalog, which is in UTM Zone 13N (EPSG:32613).
 ```{r results='hide'}
-chess.areas <- ingest.drive(config$extdata$chessareasid)
+chess.areas <- drive_download(as_id(config$extdata$chessareasid), path=file.path(tempdir(), 'areas.geojson'), overwrite=T)
 chess.areas <- st_read(chess.areas$local_path)
 chess.areas <- st_transform(chess.areas, 'EPSG:32613')
 ```
@@ -156,6 +158,7 @@ ggplot() +
   labs(title='NEON-delivered DTM') +
   theme_classic()
 ```
+
 ```{r}
 ggplot() + 
   geom_spatraster(data=neon_chm) + 
@@ -251,7 +254,7 @@ For the CHM, we'll first need to normalize the point cloud to the ground surface
 las_norm_dtm <- normalize_height(las_clipped, algorithm=knnidw(k=18L, p=2), dtm=dtm)
 
 # Rasterize the remaining canopy points
-chm <- rasterize_canopy(las_norm_dtm, res=1, algorithm=p2r(0.2))
+chm <- rasterize_canopy(las_norm_dtm, res=0.25, algorithm=p2r(0.2))
 ```
 
 Visualize it. 
@@ -310,6 +313,7 @@ What is this 'las_trees' object exactly?
 ```{r}
 las_trees
 ```
+
 How many trees did we find?
 ```{r}
 print(length(unique(las_trees$treeID)))
@@ -330,6 +334,11 @@ las_segment <- lidR::segment_trees(las_subset, algorithm=dalponte2016(chm=chm, t
 plot(las_segment, bg = "white", size = 4, color = "treeID") # visualize trees
 
 # writeLAS(las_segment, '~/Downloads/RL_pointcloud_subset_segmented.laz')
+```
+
+```{r}
+las_crowns <- delineate_crowns(las_segment, 'convex')
+plot(las_crowns)
 ```
 
 Once points are assigned to tree objects, we can examine individual trees.
@@ -359,7 +368,7 @@ ggplot(chm.tree.heights, aes(x=Stem_Height, y=CHESS25_UPTA_CHM_1m_v1.tif)) +
   ggpmisc::stat_poly_eq() + 
   labs(x='Field-measured stem height [m]', y='Maximum CHM height [m]') + 
   coord_equal() + 
-  theme_classic()
+  theme_classic(base_size=18)
 ```
 
 Does our new CHM do any better?
@@ -378,7 +387,7 @@ ggplot(chm2.tree.heights, aes(x=Stem_Height, y=Z)) +
   ggpmisc::stat_poly_eq() + 
   labs(x='Field-measured stem height [m]', y='Maximum CHM height [m]') + 
   coord_equal() + 
-  theme_classic()
+  theme_classic(base_size=18)
 ```
 
 
