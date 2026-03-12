@@ -31,7 +31,7 @@ We'll start with some basic workspace setup. This include sourcing a config file
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-This notebook relies on a few external files and packages. We specify workspace configuration requirements in a `config.yml` file ('./analysis_scripts/lidar/config.yml), which we source at the beginning of the notebook. This allows us to keep sensitive information (like paths to authentication credentials) and package dependencies separate from the main code, making it easier to manage and share the notebook. This is a best practice for larger projects, because it allows you to specify common requirements across multiple scripts or notebooks in the project. We also source a few helper functions within the `R` directory, which we can use throughout the notebook.
+We store workspace configuration requirements in a `config.yml` file ('./demos/lidar_demo/config.yml), which we source at the beginning of the notebook. This allows us to keep sensitive information (like paths to authentication credentials) and package dependencies separate from the main code, making it easier to manage and share the notebook. This is also a good practice for larger projects, because it allows you to specify common requirements across multiple scripts or notebooks in the project. We also source a few helper functions within the `R` directory, which we'll use throughout the notebook.
 
 ```{r config, include=FALSE}
 # Source config file
@@ -95,9 +95,9 @@ Next, let's ingest some LiDAR data from one of those grid cells. The data are in
 
 ```{r}
 # Ingest example las
-x.las <- readLAS(file.path(config$extdata$pclocalpath, 'NEON_D13_CRBU_DP1_327000_4315000_classified_point_cloud_colorized.laz'))
-
-# 
+x.las <- drive_download(config$extdata$xlasid, path=file.path(tempdir(), 'x.laz'), overwrite=T)
+readLAS(x.las$local_path)
+# x.las <- readLAS(file.path(config$extdata$pclocalpath, 'NEON_D13_CRBU_DP1_327000_4315000_classified_point_cloud_colorized.laz'))
 ```
 Print the basic structure.
 ```{r}
@@ -132,7 +132,7 @@ plot(x.lascat, col='dodgerblue', add=T)
 ### Sampling area locations
 Up next are the CHESS 2025 sampling area locations. These are polygon objects saved in geoJSON format. We'll ingest them as Spatial Feature (`sf`) objects using the `sf` package. We'll also transform the coordinate reference system to match that of the LAS catalog, which is in UTM Zone 13N (EPSG:32613).
 ```{r results='hide'}
-chess.areas <- ingest.drive('1297eYbGB2b30Vw-tHwKFBGznMeJ0tE96')
+chess.areas <- ingest.drive(config$extdata$chessareasid)
 chess.areas <- st_read(chess.areas$local_path)
 chess.areas <- st_transform(chess.areas, 'EPSG:32613')
 ```
@@ -180,7 +180,6 @@ trees <- left_join(trees.geo %>% dplyr::select(-Sampling_Area), trees.demog, by=
 head(trees)
 ```
 
-
 ```{r}
 plot(trees[1:14,'Sampling_Area'])
 ```
@@ -199,12 +198,10 @@ To make things manageable, we'll crop the LAS catalog to that sampling area and 
 # Clip the las catalog
 las_clipped <- clip_roi(x.lascat, st_buffer(chess.areas[5,],50))
 ```
+
 Check the innards.
 ```{r}
 print(las_clipped)
-```
-
-```{r}
 print(head(las_clipped@data))
 ```
 
