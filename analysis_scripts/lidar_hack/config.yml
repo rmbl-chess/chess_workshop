@@ -27,10 +27,12 @@ default:
   xlasid: '18UDD4uIcc3MQ36z_LRBpwXYmWGsfhBwB'
   pclocalpath: '/Users/hmworsham/Downloads/ClassifiedPointCloud_CHESS_Areas'
   treedemoid: '1RxGw125Vs42d7bNamNUmr8Ffu2gKS136'
-  treegeoid: '1ffLSDwiGAv3x2f48xvL1On-NN6L98XHl'
+  treegeoid1: '1ffLSDwiGAv3x2f48xvL1On-NN6L98XHl'
+  treegeoid2: '1pUmIRtaDg3W6Zh4am-fGiJ-Lsj7hS9AV'
   chmid: '1q-m065w50MvTy-UoX36tMJwV8sgIPvIw'
   dtmid: '1UZ_gKostGrIdZX7e5bEpK-z0mBZsv35q'
   chessareasid: '1Pubv2vGHHmdkByC-aOpHY0ODqN72a_Ue'
+  
 test:
   key1: test
 
