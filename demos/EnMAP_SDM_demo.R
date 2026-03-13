@@ -1,6 +1,6 @@
 ## Script using EnMAP imaging spectroscopy data for species distribution modeling of RMBL wildflowers.
 
-# install.packages("remotes","terra")
+# install.packages("remotes","terra","sdm","stringr","sf")
 # remotes::install_github("rmbl-sdp/rSDP")
 # library(rSDP)
 
@@ -75,10 +75,10 @@ enmap_norm_swir <- enmap_swir - enmap_brightness_swir
 names(enmap_norm_swir) <- paste0("band",1:nlyr(enmap_swir))
 
 ## Masks EnMAP brightness to meadow areas.
-enmap_vnir_meadow <- mask(crop(enmap_norm_vnir, lc_focal_thresh3), lc_focal_thresh3)
+enmap_vnir_meadow <- mask(crop(enmap_norm_vnir, meadow_mask), meadow_mask)
 names(enmap_vnir_meadow) <- paste0("band",1:nlyr(enmap_vnir_meadow))
 
-enmap_swir_meadow <- mask(crop(enmap_norm_swir, lc_focal_thresh3), lc_focal_thresh3)
+enmap_swir_meadow <- mask(crop(enmap_norm_swir,  meadow_mask), meadow_mask)
 names(enmap_swir_meadow) <- paste0("band",1:nlyr(enmap_swir_meadow))
 
 ## Runs a principal components analysis on all meadow pixels (takes a few minutes).
@@ -87,6 +87,11 @@ meadow_pca_swir <- prcomp(enmap_swir_meadow, center=TRUE, scale.=TRUE)
 
 enmap_rotated_vnir <- predict(enmap_norm_vnir, meadow_pca_vnir)
 enmap_rotated_swir <- predict(enmap_norm_swir, meadow_pca_swir)
+
+## Plots variance explained by PCA components to help decide how many to keep for SDM.
+par(mfrow=c(1,2))
+plot(meadow_pca_vnir, type = "l", main = "VNIR PCA")
+plot(meadow_pca_swir, type = "l", main = "SWIR PCA")
 
 writeRaster(enmap_rotated_vnir[[1:20]], 
             filename="Data/CHESS_workshop_data/EnMAP_tutorial/EnMAP_VNIR_PCA_meadow_20bands.tif", 
@@ -202,7 +207,7 @@ for (sp in target_species) {
   plot(r,
        main = sp,
        col = hcl.colors(50, "Lajolla"),
-       range = c(0, 1))
+       range = c(0, 0.2))
 }
 
 ## Collect evaluation statistics across all models and species.
