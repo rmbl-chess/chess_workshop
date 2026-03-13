@@ -17,7 +17,7 @@ load.pkgs(config$pkgs)
 # Config drive auth
 drive_auth(email='hmworsham@lbl.gov')
 
-
+# NEON grid
 neon.grid <- st_read(file.path(config$data, 'intermediate', 'neon_2025_lidar_utm_grid.geojson'))
 
 # Ingest tree stuff
@@ -26,12 +26,12 @@ trees.poly1 <- st_read(ingest.drive(config$extdata$treegeoid1)$local_path) # yie
 trees.poly2 <- st_read(ingest.drive(config$extdata$treegeoid2)$local_path) # yields an sf object with geometry and attributes
 
 # Join tree geospatial and demographic data
-trees <- left_join(trees.geo %>% dplyr::select(-Sampling_Area), trees.demog, by='Site_Number')
+trees <- left_join(trees.poly1 %>% dplyr::select(-Sampling_Area), trees.demog, by='Site_Number')
 
 # LAS catalog
 lascat <- readLAScatalog(file.path(config$extdata$pclocalpath))
 plot(st_geometry(neon.grid))
-plot(x.lascat, col='dodgerblue', add=T)
+plot(lascat, col='dodgerblue', add=T)
 
 # CHESS sampling area polygons
 chess.areas <- drive_download(as_id(config$extdata$chessareasid), path=file.path(tempdir(), 'areas.geojson'), overwrite=T)
