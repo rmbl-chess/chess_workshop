@@ -1,5 +1,5 @@
 # Source config file
-config <- config::get(file=file.path('config', 'config.yml'))
+config <- config::get(file=file.path('config.yml'))
 
 # Source helpers and other package functions
 lapply(list.files(file.path('.', 'R'), full.names=T), source)
@@ -9,7 +9,6 @@ load.pkgs(config$pkgs)
 
 # Config drive auth
 drive_auth(email='hmworsham@lbl.gov')
-
 
 
 neon.grid <- st_read(file.path(config$data, 'intermediate', 'neon_2025_lidar_utm_grid.geojson'))
