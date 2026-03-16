@@ -1,6 +1,5 @@
 # CHESS Workshop 2026
-# Startup script for CHESS LiDAR data analysis
-# Sets up workspace and loads some critical data
+# Generate new high-resolution CHMs for sampling areas
 
 ### --- Workspace setup --- ###
 
@@ -17,18 +16,7 @@ load.pkgs(config$pkgs)
 # Config drive auth
 drive_auth(email='hmworsham@lbl.gov')
 
-# NEON grid
-neon.grid <- st_read(file.path(config$data, 'intermediate', 'neon_2025_lidar_utm_grid.geojson'))
-
-# Ingest tree stuff
-trees.demog <- read.csv(ingest.drive(config$extdata$treedemoid)$local_path) # yields a dataframe
-trees.poly1 <- st_read(ingest.drive(config$extdata$treegeoid1)$local_path) # yields an sf object with geometry and attributes
-trees.poly2 <- st_read(ingest.drive(config$extdata$treegeoid2)$local_path) # yields an sf object with geometry and attributes
-
-shrub.poly <-
-
-# Join tree geospatial and demographic data
-trees <- left_join(trees.poly1 %>% dplyr::select(-Sampling_Area), trees.demog, by='Site_Number')
+### --- Ingest --- ###
 
 # LAS catalog
 lascat <- readLAScatalog(file.path(config$extdata$pclocalpath))
@@ -60,8 +48,8 @@ neon_upta_chm <- rast('/Users/hmworsham/Library/CloudStorage/GoogleDrive-hmworsh
 neon_upta_dtm <- rast('/Users/hmworsham/Library/CloudStorage/GoogleDrive-hmworsham@lbl.gov/.shortcut-targets-by-id/1I9nIoDCDNpJ3KQLKR9lCGFKdg533HaDQ/CHESS/Data/CHESS_workshop_data/lidar_workshop_data/CHESS25_UPTA_DTM_1m_V1.tif')
 
 # Clip LAS and write temp
-las_clipped <- clip_roi(lascat, st_buffer(chess.areas[14,],50))
-writeLAS(las_clipped, '~/Downloads/classified_point_cloud_NB.laz')
+las_clipped <- clip_roi(lascat, st_buffer(chess.areas[2,],50))
+writeLAS(las_clipped, '~/Downloads/classified_point_cloud_TK.laz')
 
 # CHM clipped
 chm_clipped <- crop(neon_crbu_chm, st_buffer(chess.areas[14,], 50))
@@ -119,7 +107,7 @@ ggplot(las_trees) +
 las_segment <- lidR::segment_trees(las_norm[!las_norm$Classification == 7], algorithm=dalponte2016(chm=neon_crbu_chm, treetops=las_trees), attribute='treeID')
 #plot(las_segment, bg = "white", size = 4, color = "treeID") # visualize trees
 
-writeLAS(las_segment, '~/Downloads/NB_pointcloud_segmented.laz')
+writeLAS(las_segment, '~/Downloads/TK_pointcloud_segmented.laz')
 
 # Convex hull
 las_crowns <- delineate_crowns(las_segment, 'convex')
@@ -136,13 +124,13 @@ make.new.chm <- function(sampling.area, lascat) {
   cat('clipping')
   l <- clip_roi(lascat, st_buffer(sampling.area, 200))
   cat('clipped')
-  l@data$Classification <- 0
+  # l@data$Classification <- 0
 
-  ws <- seq(3, 15, 3)
-  th <- seq(0.1, 3, length.out = length(ws))
-  cat('classifying')
-  l <- classify_ground(l, algorithm = pmf(ws = ws, th = th))
-  cat('classified')
+  # # ws <- seq(3, 15, 3)
+  # # th <- seq(0.1, 3, length.out = length(ws))
+  # # cat('classifying')
+  # # l <- classify_ground(l, algorithm = pmf(ws = ws, th = th))
+  # cat('classified')
   cat('normalizing')
   l <- normalize_height(l, algorithm=knnidw(k=21L, p=2))
   cat('normalized')
@@ -150,10 +138,11 @@ make.new.chm <- function(sampling.area, lascat) {
   cat('rasterizing canopy')
   chm <- rasterize_canopy(las_norm_dtm, res=0.25, algorithm=p2r(0.2), na.fill=tin())
   cat('complete')
-  chm
-  }
+  writeRaster(chm, file.path('~', 'Desktop', 'CHESS_CHM', paste0(sampling.area$SamplingAreaCode, '_CHM.tif')))
+  return(chm)
+}
 
-jj <- make.new.chm(chess.areas[1,], x.lascat)
+chms <- mclapply(1:nrow(chess.areas), \(i) make.new.chm(chess.areas[i,], x.lascat), mc.cores=getOption('mc.cores', 6L))
 
 # Remove classification
 las_clipped_noclass <- las_clipped_denoised
